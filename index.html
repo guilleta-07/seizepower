@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seize Power - Calendar</title>
+  <link rel="icon" type="image/png" href="seizepower.png">
+
+  <!-- FullCalendar -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    body { margin: 0; background: #0e0e11; color: #fff; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px; background: linear-gradient(90deg,#5b2cff,#8a5cff);
+    }
+    header .left { display: flex; align-items: center; gap: 14px; }
+    header h1 { margin: 0; font-size: 22px; font-weight: 800; }
+    header img { height: 40px; }
+    #calendar { max-width: 1100px; margin: 30px auto; background: #15151c; padding: 16px; border-radius: 16px; }
+
+    /* Modal */
+    .modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  pointer-events: auto;
+}
+    .modal-content {
+      background: #1c1c25; padding: 20px; border-radius: 14px; width: 320px;
+    }
+    .modal-content h3 { margin-top: 0; }
+    .modal-content label { display: block; margin-top: 10px; font-size: 14px; }
+    .modal-content select, .modal-content input {
+      width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: none;
+    }
+    .modal-actions { display: flex; justify-content: space-between; margin-top: 16px; }
+    .btn { padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer; font-weight: 700; }
+    .btn.save { background: #5bff9a; }
+    .btn.delete { background: #ff5b5b; }
+    .btn.cancel { background: #555; color: #fff; }
+
+.results-btn {
+  background: #0e0e11;
+  color: #fff;
+  border: 2px solid #ffffff55;
+  padding: 8px 16px;
+  border-radius: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.results-btn:hover {
+  background: #ffffff;
+  color: #0e0e11;
+  transform: scale(1.05);
+}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="left">
+     <img src="seizepowersinfondo.png" alt="Logo" />
+     <h1>Seize Power</h1>
+  </div>
+
+  <button class="results-btn" id="resultsBtn">Resultados</button>
+  
+</header>
+
+
+  <div id="calendar"></div>
+
+  <!-- Modal -->
+  <div class="modal" style="display:none;" id="eventModal">
+    <div class="modal-content">
+      <h3>Evento</h3>
+      <label>Tipo</label>
+      <select id="eventType">
+        <option>Matcherino</option>
+        <option>Scrim</option>
+        <option>Otro</option>
+      </select>
+      <label>Hora</label>
+      <input type="time" id="eventTime" />
+      <div class="modal-actions">
+        <button class="btn save" id="saveBtn">Guardar</button>
+        <button class="btn delete" id="deleteBtn">Borrar</button>
+        <button class="btn cancel" id="cancelBtn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ====== SUPABASE CONFIG ======
+  const SUPABASE_URL = 'https://bxnwcnzpmdnyepqpgmes.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4bndjbnpwbWRueWVwcXBnbWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5MzAzNzEsImV4cCI6MjA4NDUwNjM3MX0.ojiQ5F06KpvGVDXKYIbkaoCctndkLHuqgvHlbDW3QcU';
+  const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+  );
+
+  let selectedDate = null;
+  let selectedEvent = null;
+  let calendar = null;
+
+  document.addEventListener('DOMContentLoaded', async function () {
+    const calendarEl = document.getElementById('calendar');
+
+    calendar = new FullCalendar.Calendar(calendarEl, {
+      displayEventTime: false,
+      eventDisplay: 'block',
+      initialView: 'dayGridMonth',
+      headerToolbar: {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,timeGridWeek,timeGridDay'
+      },
+      dateClick: (info) => {
+        selectedDate = info.dateStr;
+        selectedEvent = null;
+        openModal(false);
+      },
+      eventClick: (info) => {
+        selectedEvent = info.event;
+        selectedDate = info.event.startStr.split('T')[0];
+        document.getElementById('eventType').value = info.event.extendedProps.type;
+        document.getElementById('eventTime').value = info.event.extendedProps.time;
+        openModal(true);
+      },
+      events: fetchEvents
+    });
+
+    calendar.render();
+  });
+
+  async function fetchEvents(info, successCallback, failureCallback) {
+    const { data, error } = await supabaseClient
+      .from('events')
+      .select('*');
+
+    if (error) {
+      console.error(error);
+      failureCallback(error);
+      return;
+    }
+
+    const events = data.map(e => {
+      let bg = '#cccccc';
+      let text = '#000';
+
+      if (e.type === 'Matcherino') {
+        bg = '#FFD800';
+      }
+      if (e.type === 'Scrim') {
+        bg = '#0f3d3a';
+        text = '#fff';
+      }
+
+      return {
+        id: e.id,
+        title: `${e.type} - ${e.time}`,
+        start: `${e.date}T${e.time}`,
+        type: e.type,
+        time: e.time,
+        backgroundColor: bg,
+        borderColor: bg,
+        textColor: text
+      };
+    });
+
+    successCallback(events);
+  }
+
+  document.getElementById('saveBtn').onclick = async () => {
+    const type = document.getElementById('eventType').value;
+    const time = document.getElementById('eventTime').value;
+
+    if (!time) {
+      alert('La hora es obligatoria');
+      return;
+    }
+
+    // 🔒 Comprobar hora repetida
+    const { data: existing, error } = await supabaseClient
+      .from('events')
+      .select('*')
+      .eq('date', selectedDate)
+      .eq('time', time);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    if (
+      existing.length > 0 &&
+      (!selectedEvent || existing[0].id !== selectedEvent.id)
+    ) {
+      alert('Ya hay un evento a esa hora en este día');
+      return;
+    }
+
+    if (selectedEvent) {
+      await supabaseClient
+        .from('events')
+        .update({ type, time })
+        .eq('id', selectedEvent.id);
+    } else {
+      await supabaseClient
+        .from('events')
+        .insert({ date: selectedDate, type, time });
+    }
+
+    calendar.refetchEvents();
+    closeModal();
+  };
+
+  document.getElementById('deleteBtn').onclick = async () => {
+    if (!selectedEvent) return;
+
+    await supabaseClient
+      .from('events')
+      .delete()
+      .eq('id', selectedEvent.id);
+
+    calendar.refetchEvents();
+    closeModal();
+  };
+
+  document.getElementById('cancelBtn').onclick = closeModal;
+
+  function openModal(isEdit) {
+    document.getElementById('eventModal').style.display = 'flex';
+    document.getElementById('deleteBtn').style.display = isEdit ? 'block' : 'none';
+  }
+
+  function closeModal() {
+    document.getElementById('eventModal').style.display = 'none';
+    document.getElementById('eventTime').value = '';
+  }
+
+document.getElementById('resultsBtn').onclick = () => {
+  window.location.href = 'resultados.html';
+};
+
+</script>
+</body>
+</html>
